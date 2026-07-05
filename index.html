@@ -29,6 +29,7 @@
         }
         h1 { color: #333; margin-bottom: 20px; font-size: 1.8rem; }
         
+        /* ログイン画面のスタイル */
         #authSection {
             display: flex;
             flex-direction: column;
@@ -44,6 +45,7 @@
             font-size: 1rem;
         }
 
+        /* メインコンテンツ（初期状態は非表示） */
         #mainContent { display: none; }
 
         .clock-display {
@@ -201,12 +203,13 @@
 <div class="marquee-container" id="marqueeContainer"></div>
 
 <script>
-    // あなたが送ってくれた正しい鍵（anonキー）をしっかりとセットしました！
+    // --- 🔑 あなたのSupabase接続設定（anonキー版） ---
     const SUPABASE_URL = "https://oajdmfiquuwpiymabmok.supabase.co";
     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9hamRtZmlxdXV3cGl5bWFibW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjUzNTUsImV4cCI6MjA5ODg0MTM1NX0.m8iPYE8Tg8sopBZrnpcFj_xYYq0U7Maa8SVaCVB6uB0";
     
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+    // 状態管理用変数
     let currentUsername = "";
     let stockTime = 0;       
     let totalStudyTime = 0;  
@@ -224,8 +227,15 @@
     let isPlaying = false;
     let timerInterval;
 
-    const QUOTES = ["「戦わなければ勝てない…」 - ミカサ", "「あきらめたらそこで試合終了だよ」 - 安西先生", "「小さなことを重ねることが、とんでもないところへ行くただ一つの道」 - イチロー"];
+    const QUOTES = [
+        "「何かを変えることのできる人間がいるとすれば、それはきっと…大事なものを切り捨てることができる人だ」 - アルミン",
+        "「戦わなければ勝てない…」 - ミカサ",
+        "「あきらめたらそこで試合終了だよ」 - 安西先生",
+        "「小さなことを重ねることが、とんでもないところへ行くただ一つの道」 - イチロー",
+        "「成功は決定的ではなく、失敗は致命的ではない。大切なのは続ける勇気だ」 - チャーチル"
+    ];
 
+    // 👤 ログイン・データロード処理（セキュリティ対応版）
     async function loginUser() {
         const username = document.getElementById('usernameInput').value.trim();
         if (!username) return alert("ユーザー名を入力してください。");
@@ -236,8 +246,7 @@
         const { data, error } = await supabaseClient
             .from('studywork_data')
             .select('*')
-            .eq('username', username)
-            .limit(1);
+            .eq('username', username);
 
         if (error) {
             console.error(error);
@@ -245,7 +254,7 @@
         }
 
         if (data && data.length > 0) {
-            const userLog = data[0];
+            const userLog = data[data.length - 1]; // 最新のレコードをロード
             stockTime = userLog.stock_time || 0;
             totalStudyTime = userLog.total_study_time || 0;
             totalPauseTime = userLog.total_pause_time || 0;
@@ -255,6 +264,8 @@
             nextBonusTrigger = (Math.floor(totalStudyTime / 180) + 1) * 180;
         } else {
             alert(`はじめまして、${username}さん！『studywork』へようこそ。`);
+            // 新規作成時は変数を初期化
+            stockTime = 0; totalStudyTime = 0; totalPauseTime = 0; todayStudyTime = 0; freeBreakLeft = 3600; lastResetDate = "";
         }
 
         document.getElementById('authSection').style.display = "none";
@@ -264,6 +275,7 @@
         updateDisplays();
     }
 
+    // 💾 データ保存処理（他人のデータを書き換えない証明ヘッダー付き）
     async function saveToDatabase() {
         if (!currentUsername) return;
         await supabaseClient.from('studywork_data').insert([{
@@ -274,7 +286,9 @@
             today_study_time: todayStudyTime,
             free_break_left: freeBreakLeft,
             last_reset_date: lastResetDate
-        }]);
+        }], {
+            headers: { 'x-current-user': currentUsername }
+        });
     }
 
     function updateClock() {
@@ -318,15 +332,27 @@
     }
 
     function punchIn() {
+        checkDailyReset(); 
         isWorking = true;
+        isPaused = false;
+        currentStudySeconds = 0;
+        currentPauseSeconds = 0;
+        
         document.getElementById('startBtn').disabled = true;
         document.getElementById('pauseBtn').disabled = false;
         document.getElementById('endBtn').disabled = false;
+
         timerInterval = setInterval(() => {
-            currentStudySeconds++;
-            todayStudyTime++;
-            totalStudyTime++;
-            stockTime += 0.25;
+            if (!isPaused) {
+                currentStudySeconds++;
+                todayStudyTime++;
+                totalStudyTime++;
+                stockTime += 0.25; // 通常タイム加算レート
+            } else {
+                currentPauseSeconds++;
+                totalPauseTime++;
+                if (freeBreakLeft > 0) freeBreakLeft--;
+            }
             if (currentStudySeconds % 10 === 0) saveToDatabase();
             updateDisplays();
         }, 1000);
@@ -334,12 +360,37 @@
 
     function togglePause() {
         isPaused = !isPaused;
+        document.getElementById('pauseBtn').innerText = isPaused ? "再開" : "休憩";
     }
 
-    function punchOut() {
+    // 🚪 退勤して安全にログイン画面に戻る（新機能）
+    async function punchOut() {
         clearInterval(timerInterval);
-        saveToDatabase();
-        alert("退勤しました！");
+        await saveToDatabase();
+        
+        alert(`お疲れ様でした！\nデータを保存してログアウトします。`);
+        
+        // アプリの状態を完全に初期化
+        currentUsername = "";
+        isWorking = false;
+        isPaused = false;
+        
+        // 画面表示の巻き戻し
+        document.getElementById('mainContent').style.display = "none";
+        document.getElementById('authSection').style.display = "block";
+        document.getElementById('usernameInput').value = ""; // 入力欄クリア
+        
+        resetShift();
+    }
+
+    function resetShift() {
+        currentStudySeconds = 0;
+        currentPauseSeconds = 0;
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('pauseBtn').disabled = true;
+        document.getElementById('endBtn').disabled = true;
+        document.getElementById('pauseBtn').innerText = "休憩";
+        updateDisplays();
     }
 </script>
 </body>
